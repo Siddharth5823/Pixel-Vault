@@ -1,0 +1,29 @@
+# Compiled Binaries
+*.exe
+*.out
+*.app
+
+# Object and Library Files
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dll
+
+# IDE and Build Systems
+.vscode/
+.idea/
+build/
+bin/
+cmake-build-debug/
+cmake-build-release/
+
+# Operating System Files
+.DS_Store
+Thumbs.db
+
+# Large Assets (Optional: use Git LFS if you have many test images)
+*.bmp
+*.png
+*.jpg
