@@ -1,80 +1,87 @@
 # Pixel-Vault: The Invisible Data Carrier
 
-Pixel-Vault is a research-grade steganography suite designed for the secure embedding of encrypted data within image carriers. Moving beyond simple LSB replacement, Pixel-Vault utilizes authenticated encryption, computational key stretching, and statistical noise injection to ensure hidden data remains mathematically uncrackable and statistically undetectable.
+Pixel-Vault is a research-grade steganography suite designed for the secure embedding of encrypted data within image carriers. It moves beyond simple LSB replacement to implement a **hardened stegosystem** utilizing authenticated encryption, computational key stretching, and statistical noise injection.
 
 ## 🚀 Project Versions & Binaries
 
-| Version | Description | Binaries |
-| :--- | :--- | :--- |
-| **v5.0 (Current)** | Hardened Spatial God-Mode | [Encoder](./v5/encoder.exe) / [Decoder](./v5/decoder.exe) |
-| **v4.0** | AES-CTR + PRNG Scattering | [Encoder](./v4/encoder.exe) / [Decoder](./v4/decoder.exe) |
-| **v3.0** | Basic LSB + AES-ECB | [Encoder](./v3/encoder.exe) / [Decoder](./v3/decoder.exe) |
+| Version | Description | Status | Binaries |
+| :--- | :--- | :--- | :--- |
+| **v5.0 (Final)** | Hardened Spatial God-Mode | **Stable** | [Encoder](./v5/encoder.exe) / [Decoder](./v5/decoder.exe) |
+| **v4.0** | Adaptive Stealth & PRNG | Legacy | [Encoder](./v4/encoder.exe) / [Decoder](./v4/decoder.exe) |
+| **v3.0** | Block Cipher Integration | Legacy | [Encoder](./v3/encoder.exe) / [Decoder](./v3/decoder.exe) |
 
 ---
 
-## 🛠 Features (v5.0 God-Mode)
+## 🛠 Features v5.0
 
-* **100,000-Round Key Stretching:** Implements a PBKDF2-style Key Derivation Function with 100k iterations of SHA-256 to protect against GPU-accelerated brute-force attacks.
-* **Fisher-Yates Scattering:** A custom, deterministic shuffling algorithm ensures bits are scattered across the entire image carrier, maintaining 100% cross-platform compatibility.
-* **Statistical Noise Injection:** Fills the entire carrier map with randomized noise padding to maintain a uniform entropy signature, defeating Chi-Square analysis.
+* **100,000-Round Key Stretching:** Utilizes a PBKDF2-style KDF with 100k iterations of SHA-256. This exponentially increases the "Work Factor," making brute-force attacks on even weak passwords mathematically infeasible.
+* **Fisher-Yates Scattering:** A custom, deterministic shuffling algorithm ensures the payload is non-linearly distributed across the image carrier, breaking the link between physical pixel proximity and data sequence.
+* **Statistical Noise Injection:** After payload embedding, the system fills the remaining 100% of the image map with cryptographic noise. This ensures a uniform entropy signature across the entire file.
 * **LSB Matching (+/- 1):** Prevents "Values Stepping" in the image histogram, successfully bypassing Regular/Singular (RS) Steganalysis.
 * **Hybrid Interface:** Professional CLI architecture that triggers native OS file dialogs via `tinyfiledialogs` when paths are not specified.
 * **Authenticated Encryption:** Combines AES-128 (CTR Mode) with a SHA-256 HMAC checksum to verify data integrity before decryption.
 
 ---
 
-## 📊 Metrics Table
+## 📖 Theoretical Foundation
 
-| Metric | v1.0 - v3.0 | v4.0 | v5.0 (Hardened) |
-| :--- | :--- | :--- | :--- |
-| **Cipher Mode** | AES-ECB | AES-CTR | AES-CTR + HMAC |
-| **Key Derivation** | Direct XOR | Simple Hash | 100,000x SHA-256 |
-| **Data Mapping** | Linear | PRNG Shuffle | Fisher-Yates (Deterministic) |
-| **Steganalysis Resistance**| Low | Moderate | High (Noise Injection) |
-| **Memory Security** | None | None | **Secure RAM Scrubbing** |
-| **Interface** | Interactive Console | Interactive Console | **Hybrid CLI/GUI Dialogs** |
+### 1. Computational Invisibility (PBKDF2)
+Standard hashing is too fast. A modern GPU can test 100 million SHA-256 hashes per second. By looping the hash 100,000 times, we force the attacker's hardware to work 100,000 times harder per guess, effectively "stretching" a simple password into a military-grade key.
+
+### 2. Forensic Invisibility (LSB Matching vs. Replacement)
+Traditional LSB replacement creates a "Pair of Values" (PoV) artifact. Pixel-Vault v5 uses **LSB Matching (+/- 1)**, where the pixel value is randomly incremented or decremented. This preserves the natural image histogram and defeats **Regular/Singular (RS) Steganalysis**.
+
+
+
+### 3. Statistical Deniability (Noise Padding)
+A major weakness in steganography is the "Entropy Edge"—the point where high-entropy hidden data stops and low-entropy natural pixels begin. Pixel-Vault v5 eliminates this edge by padding the entire image with noise, making the existence of a message **statistically deniable**.
 
 ---
 
-## 📝 Changelog
+## 🛡️ The Invisibility Argument (Detection Bypass)
+
+In a **lossless transmission** environment (e.g., sending as a binary "File" on Telegram or via local storage), Pixel-Vault v5 is designed to bypass all primary forms of interception and detection:
+
+### 1. Visual Inspection (The Human Eye)
+Human vision is generally incapable of perceiving color shifts below 2-3%. Our +/- 1 LSB matching alters the color value of a pixel by only **0.39%**. Even under high magnification, the changes are indistinguishable from the natural sensor noise present in all digital photography.
+
+### 2. Statistical Detection (Chi-Square & Entropy Analysis)
+Forensic tools look for "Entropy Discontinuity"—sharp changes in randomness within a file. By filling the entire image map with noise padding, Pixel-Vault ensures a perfectly uniform entropy signature. To an analyzer, the file appears to be a high-ISO photograph with uniform noise, leaving no signature for a detection algorithm to latch onto.
+
+### 3. Algorithmic Interception (Histogram Analysis)
+Basic steganography creates "staircase" effects in color frequency. By using **LSB Matching** (random addition/subtraction) rather than replacement, we preserve the natural curve of the image's colors. To automated scripts, the histogram remains mathematically "natural."
+
+### 4. Brute-Force Immunity
+Even if an interceptor extracts the bitstream, they are met with AES-128 CTR encrypted data. The **100,000-round KDF** creates a physical time-barrier. The time required to crack even a moderate password exceeds the operational lifespan of most secret communications.
+
+---
+
+## 📝 Detailed Changelog
 
 ### v5.0 — The "Hardened" Release
-- **Added:** Iterative key stretching (100k rounds) to mathematically secure weak passwords.
-- **Added:** Full-image noise padding to achieve statistical uniformity.
-- **Added:** Native Windows/Linux file explorer integration for enhanced UX.
-- **Fixed:** Replaced `std::shuffle` with custom Fisher-Yates to fix cross-compiler map desync.
-- **Security:** Implemented `memset` memory scrubbing to wipe plaintext from RAM immediately after use.
+* **Key Stretching:** Implemented 100k-round SHA-256 KDF to secure passwords.
+* **Noise Injection:** Developed full-map padding to defeat entropy-based detection.
+* **Cross-Platform Fix:** Migrated from `std::shuffle` to custom Fisher-Yates to ensure identical pixel mapping across GCC, MinGW, and MSVC.
+* **Security Sanitization:** Added `memset` memory scrubbing to zero-out plaintext buffers in RAM immediately after use.
+* **UX:** Integrated `tinyfiledialogs.c` for a hybrid CLI/GUI workflow.
 
 ### v4.0 — The "Stealth" Release
-- **Added:** SHA-256 hashing for AES key and PRNG seed derivation.
-- **Added:** LSB Matching (+/- 1) to prevent histogram artifacts.
-- **Added:** PRNG pixel scattering to prevent linear discovery.
-
-### v3.0 — The "Crypto" Release
-- **Added:** Integration of AES-128 encryption.
-- **Added:** `PVLT` magic byte header for password verification.
+* **Adaptive Embedding:** Introduced +/- 1 LSB matching to prevent histogram artifacts.
+* **Scattered Mapping:** Implemented PRNG-based pixel selection to avoid linear discovery.
+* **Cipher Upgrade:** Switched to AES-CTR mode to eliminate padding blocks.
 
 ---
 
-## 🛡️ Technical Architecture & Invisibility
+## 💻 Build & Environment
 
-Pixel-Vault v5 achieves invisibility through **The Trinity of Hardening**:
-
-1. **Computational Invisibility:** The 100k-round KDF ensures that the cost of brute-forcing the vault exceeds the value of the data, even for high-performance computing clusters.
-2. **Forensic Invisibility:** By using LSB Matching (+/- 1), the natural histogram of the image is preserved, leaving no traces for RS Steganalysis to detect.
-3. **Statistical Invisibility:** Noise injection ensures that the entropy signature of the "stego" image is perfectly uniform, making the actual payload indistinguishable from the carrier's natural noise.
-
----
-
-## 💻 Compilation
-
-To build from source (requires MinGW-w64 on Windows):
+**Target:** Windows 10/11 (MinGW-w64)  
+**Libraries:** `picosha2`, `tinyfiledialogs`, `stb_image`, `tiny-AES-c`.
 
 ```bash
-# 1. Compile C components
+# Compile C components
 gcc -c aes.c -o aes.o -I.
 gcc -c tinyfiledialogs.c -o tinyfiledialogs.o -I.
 
-# 2. Link with C++ Encoder/Decoder
+# Link with C++ Core
 g++ encoder.cpp aes.o tinyfiledialogs.o -o encoder.exe -I. -lole32 -lcomdlg32 -luser32
 g++ decoder.cpp aes.o tinyfiledialogs.o -o decoder.exe -I. -lole32 -lcomdlg32 -luser32
