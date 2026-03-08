@@ -1,6 +1,9 @@
 #include <iostream>
 #include <vector>
 #include <string>
+#include <random>
+#include <numeric>
+#include <algorithm>
 
 extern "C" {
     #include "aes.h"
@@ -19,54 +22,91 @@ void deriveKey(string password, uint8_t* key) {
     }
 }
 
-void decodeLSB(const string& stegoPath, const uint8_t* key) {
+unsigned int generateSeed(const string& password) {
+    unsigned int seed = 0;
+    for (char c : password) {
+        seed = (seed * 31) + c; 
+    }
+    return seed;
+}
+
+void decodeLSB(const string& stegoPath, const uint8_t* key, string password) {
     int width, height, channels;
     unsigned char* imgData = stbi_load(stegoPath.c_str(), &width, &height, &channels, 0);
     if (!imgData) { cerr << "Error: Could not load stego image!" << endl; return; }
 
-    int bitIdx = 0;
+    int totalBytes = width * height * channels;
 
-    // 1. Extract the 32-bit length prefix
-    int payloadBytes = 0;
+    // --- MISSING BLOCK RESTORED: Rebuild the PRNG Scattering Map ---
+    vector<int> indices(totalBytes);
+    iota(indices.begin(), indices.end(), 0);
+    
+    mt19937 prng(generateSeed(password));
+    shuffle(indices.begin(), indices.end(), prng);
+
+    int bitIdx = 0;
+    // ---------------------------------------------------------------
+
+    // 1. Strict Type Enforcement: Use unsigned 32-bit int
+    uint32_t payloadBytes = 0; 
     for (int i = 0; i < 32; i++) {
-        int bit = imgData[bitIdx] & 1;
+        int mappedIdx = indices[bitIdx];
+        int bit = imgData[mappedIdx] & 1;
         payloadBytes = (payloadBytes << 1) | bit;
         bitIdx++;
     }
 
-    long long totalPixels = (long long)width * height * channels;
-    if (payloadBytes <= 16 || (payloadBytes * 8 + 32) > totalPixels) {
-        cout << "\n[!] CRITICAL ERROR: Image does not contain a valid Pixel-Vault payload." << endl;
-        stbi_image_free(imgData); return;
+    // 2. Absolute Bounds Checking
+    uint32_t maxPossibleBytes = (totalBytes - 32) / 8;
+
+    if (payloadBytes < 16 || payloadBytes > maxPossibleBytes) {
+        cout << "\n[!] CRITICAL ERROR: Integrity check failed. Incorrect password or corrupted image." << endl;
+        stbi_image_free(imgData); 
+        return;
     }
 
-    // 2. Extract the Payload (IV + Ciphertext)
-    vector<uint8_t> finalPayload(payloadBytes);
-    for (int i = 0; i < payloadBytes; i++) {
+    // 3. Memory Allocation Guard (try-catch)
+    vector<uint8_t> finalPayload;
+    try {
+        finalPayload.resize(payloadBytes);
+    } catch (const bad_alloc& e) {
+        cout << "\n[!] CRITICAL ERROR: Payload allocation failed. Incorrect password." << endl;
+        stbi_image_free(imgData); 
+        return;
+    }
+
+    // 4. Safe Payload Extraction with Loop Guards
+    for (uint32_t i = 0; i < payloadBytes; i++) {
         uint8_t byte = 0;
         for (int b = 0; b < 8; b++) {
-            int bit = imgData[bitIdx] & 1;
+            // Ultimate Guard Rail: Physically prevents the index out-of-bounds assertion
+            if (bitIdx >= totalBytes) {
+                cout << "\n[!] CRITICAL ERROR: Reached end of map unexpectedly." << endl;
+                stbi_image_free(imgData); 
+                return;
+            }
+            int mappedIdx = indices[bitIdx];
+            int bit = imgData[mappedIdx] & 1;
             byte = (byte << 1) | bit;
             bitIdx++;
         }
         finalPayload[i] = byte;
     }
-    stbi_image_free(imgData); 
+    stbi_image_free(imgData);
 
-    // 3. Separate the IV and the Ciphertext
+    // 5. Separate the IV and the Ciphertext
     uint8_t iv[16];
     for (int i = 0; i < 16; i++) iv[i] = finalPayload[i];
     
     int cipherLen = payloadBytes - 16;
     vector<uint8_t> ciphertext(finalPayload.begin() + 16, finalPayload.end());
 
-    // 4. Decrypt using AES-CTR mode
+    // 6. Decrypt using AES-CTR mode
     struct AES_ctx ctx;
     AES_init_ctx_iv(&ctx, key, iv);
-    // CTR mode uses the exact same function to decrypt!
     AES_CTR_xcrypt_buffer(&ctx, ciphertext.data(), cipherLen); 
 
-    // 5. Verify Magic Bytes
+    // 7. Verify Magic Bytes
     string header = "";
     if (cipherLen >= 4) {
         for (int i = 0; i < 4; i++) header += (char)ciphertext[i];
@@ -78,7 +118,7 @@ void decodeLSB(const string& stegoPath, const uint8_t* key) {
         return;
     }
 
-    // 6. Extract the final message (No padding to remove!)
+    // 8. Extract the final message
     string decryptedText(ciphertext.begin() + 4, ciphertext.end());
     cout << "\n[SUCCESS] Decoded Message: " << decryptedText << endl;
 }
@@ -87,13 +127,13 @@ int main() {
     string stegoPath = "../images/stego.png";
     string password;
 
-    cout << "=== Pixel-Vault Decoder (v3.0 - AES-CTR) ===" << endl;
+    cout << "=== Pixel-Vault Decoder (v3.0 - PRNG Scatter) ===" << endl;
     cout << "Enter Decryption Password: ";
     getline(cin, password);
 
     uint8_t key[16];
     deriveKey(password, key);
 
-    decodeLSB(stegoPath, key);
+    decodeLSB(stegoPath, key, password);
     return 0;
 }

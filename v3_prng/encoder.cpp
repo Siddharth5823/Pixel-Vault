@@ -3,6 +3,8 @@
 #include <string>
 #include <random>
 #include <ctime>
+#include <numeric>   // Needed for std::iota
+#include <algorithm> // Needed for std::shuffle
 
 // Wrap the C-library headers in extern "C"
 extern "C" {
@@ -25,7 +27,16 @@ void deriveKey(string password, uint8_t* key) {
     }
 }
 
-void embedLSB(const string& inputPath, const string& outputPath, string message, const uint8_t* key) {
+// Converts the password into a predictable numeric seed for the PRNG
+unsigned int generateSeed(const string& password) {
+    unsigned int seed = 0;
+    for (char c : password) {
+        seed = (seed * 31) + c; 
+    }
+    return seed;
+}
+
+void embedLSB(const string& inputPath, const string& outputPath, string message, const uint8_t* key, string password) {
     // 1. Prepare the Message with Magic Bytes (NO PADDING NEEDED for CTR mode!)
     string rawMessage = "PVLT" + message;
     int cipherLen = rawMessage.length();
@@ -41,7 +52,6 @@ void embedLSB(const string& inputPath, const string& outputPath, string message,
     // 3. Encrypt using AES-CTR mode
     struct AES_ctx ctx;
     AES_init_ctx_iv(&ctx, key, iv);
-    // CTR mode uses xcrypt for both encryption and decryption
     AES_CTR_xcrypt_buffer(&ctx, ciphertext.data(), cipherLen); 
 
     // 4. Assemble the Final Payload: [IV] + [Ciphertext]
@@ -56,34 +66,44 @@ void embedLSB(const string& inputPath, const string& outputPath, string message,
     unsigned char* imgData = stbi_load(inputPath.c_str(), &width, &height, &channels, 0);
     if (!imgData) { cerr << "Error: Could not load image!" << endl; return; }
 
-    long long totalPixels = (long long)width * height * channels;
-    if (totalPixels < 32 + (payloadBytes * 8)) {
+    int totalBytes = width * height * channels;
+    if (totalBytes < 32 + (payloadBytes * 8)) {
         cerr << "Error: Image is too small!" << endl;
         stbi_image_free(imgData); return;
     }
 
+    // 6. Generate the PRNG Scattering Map
+    cout << "[*] Generating cryptographic pixel map..." << endl;
+    vector<int> indices(totalBytes);
+    iota(indices.begin(), indices.end(), 0); // Fills array with 0, 1, 2... totalBytes-1
+    
+    mt19937 prng(generateSeed(password));
+    shuffle(indices.begin(), indices.end(), prng); // Shuffles based on password
+
     int bitIdx = 0;
 
-    // 6. Embed the Length Prefix (32 bits) - Represents total bytes of (IV + Ciphertext)
+    // 7. Embed the Length Prefix (Scattered!)
     for (int i = 0; i < 32; i++) {
         int bit = (payloadBytes >> (31 - i)) & 1;
-        imgData[bitIdx] = (imgData[bitIdx] & 0xFE) | bit;
+        int mappedIdx = indices[bitIdx]; // Get the random pixel location
+        imgData[mappedIdx] = (imgData[mappedIdx] & 0xFE) | bit;
         bitIdx++;
     }
 
-    // 7. Embed the Payload bits
+    // 8. Embed the Payload bits (Scattered!)
     for (int i = 0; i < payloadBytes; i++) {
         for (int b = 7; b >= 0; b--) {
             int bit = (finalPayload[i] >> b) & 1;
-            imgData[bitIdx] = (imgData[bitIdx] & 0xFE) | bit;
+            int mappedIdx = indices[bitIdx]; // Get the random pixel location
+            imgData[mappedIdx] = (imgData[mappedIdx] & 0xFE) | bit;
             bitIdx++;
         }
     }
 
-    // 8. Save as PNG
+    // 9. Save as PNG
     stbi_write_png(outputPath.c_str(), width, height, channels, imgData, width * channels);
     stbi_image_free(imgData);
-    cout << "Success: CTR-Encrypted data hidden in " << outputPath << endl;
+    cout << "[+] Success: PRNG-Scattered CTR-Encrypted data hidden in " << outputPath << endl;
 }
 
 int main() {
@@ -91,7 +111,7 @@ int main() {
     string stegoPath = "../images/stego.png";
     string secret, password;
 
-    cout << "=== Pixel-Vault Encoder (v3.0 - AES-CTR) ===" << endl;
+    cout << "=== Pixel-Vault Encoder (v3.0 - PRNG Scatter) ===" << endl;
     cout << "Enter Secret Message: ";
     getline(cin, secret);
     cout << "Set Encryption Password: ";
@@ -100,6 +120,6 @@ int main() {
     uint8_t key[16];
     deriveKey(password, key);
 
-    embedLSB(coverPath, stegoPath, secret, key);
+    embedLSB(coverPath, stegoPath, secret, key, password);
     return 0;
 }
