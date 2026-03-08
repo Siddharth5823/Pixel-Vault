@@ -4,7 +4,7 @@
 #include <random>
 #include <numeric>
 #include <algorithm>
-#include <cstring> // For memset
+#include <cstring> // For memset/memcpy
 
 #include "picosha2.h"
 #include "tinyfiledialogs.h"
@@ -22,17 +22,25 @@ struct CryptoMaterial {
     unsigned int prngSeed;
 };
 
-// SHA-256 Key Derivation (v5)
-CryptoMaterial deriveCryptoMaterial(const string& password) {
+// --- 1. MATCHING HARDENED KDF: 100,000 Rounds of SHA-256 ---
+CryptoMaterial deriveHardenedMaterial(const string& password) {
     CryptoMaterial material;
     vector<unsigned char> hash(picosha2::k_digest_size);
-    picosha2::hash256(password.begin(), password.end(), hash.begin(), hash.end());
+    string salt = "PixelVault_v5_Final_Hardened_Salt"; // Must match Encoder exactly
+    string stretching = password + salt;
+
+    cout << "[*] Stretching key (100,000 rounds)..." << endl;
+    for(int i = 0; i < 100000; i++) {
+        picosha2::hash256(stretching.begin(), stretching.end(), hash.begin(), hash.end());
+        stretching = string(hash.begin(), hash.end());
+    }
+
     for(int i = 0; i < 16; i++) material.aesKey[i] = hash[i];
     material.prngSeed = (hash[16] << 24) | (hash[17] << 16) | (hash[18] << 8) | hash[19];
     return material;
 }
 
-// v5 Cross-Platform Fisher-Yates Shuffle (Matches Encoder)
+// --- 2. MATCHING DETERMINISTIC SHUFFLE (Fisher-Yates) ---
 void deterministicShuffle(vector<int>& vec, unsigned int seed) {
     mt19937 rng(seed);
     for (int i = vec.size() - 1; i > 0; --i) {
@@ -42,7 +50,7 @@ void deterministicShuffle(vector<int>& vec, unsigned int seed) {
     }
 }
 
-// Secure Wipe: Overwrites sensitive RAM with zeros
+// Secure Wipe: Overwrites data in RAM with zeros
 void secureWipe(string& s) {
     if (!s.empty()) {
         memset(&s[0], 0, s.size());
@@ -51,57 +59,58 @@ void secureWipe(string& s) {
 }
 
 void processDecoding(string stegoPath, string password) {
-    CryptoMaterial keys = deriveCryptoMaterial(password);
+    CryptoMaterial keys = deriveHardenedMaterial(password);
 
     int width, height, channels;
     unsigned char* imgData = stbi_load(stegoPath.c_str(), &width, &height, &channels, 0);
-    if (!imgData) { cerr << "[!] Failed to load stego image." << endl; return; }
+    if (!imgData) { cerr << "[!] Error: Could not load stego image." << endl; return; }
 
     uint32_t totalBytes = width * height * channels;
-    vector<int> indices(totalBytes);
-    iota(indices.begin(), indices.end(), 0);
+    vector<int> allIndices(totalBytes);
+    iota(allIndices.begin(), allIndices.end(), 0);
     
     cout << "[*] Rebuilding universal pixel map..." << endl;
-    deterministicShuffle(indices, keys.prngSeed);
+    deterministicShuffle(allIndices, keys.prngSeed);
 
     int bitIdx = 0;
 
-    // 1. Extract Length (Scattered)
+    // 3. Extract Length (Always in the first 32 mapped pixels)
     uint32_t payloadBytes = 0; 
     for (int i = 0; i < 32; i++) {
-        payloadBytes = (payloadBytes << 1) | (imgData[indices[bitIdx++]] & 1);
+        payloadBytes = (payloadBytes << 1) | (imgData[allIndices[bitIdx++]] & 1);
     }
 
+    // Safety Bounds Check
     uint32_t maxPossibleBytes = (totalBytes - 32) / 8;
     if (payloadBytes < 52 || payloadBytes > maxPossibleBytes) {
-        cout << "\n[!] CRITICAL ERROR: Integrity check failed. Wrong password or corrupted image." << endl;
+        cout << "\n[!] CRITICAL ERROR: Integrity check failed. (Incorrect password or corrupted image)" << endl;
         stbi_image_free(imgData); return;
     }
 
-    // 2. Extract Payload (Scattered)
+    // 4. Extract Encrypted Payload
     vector<uint8_t> finalPayload(payloadBytes);
     for (uint32_t i = 0; i < payloadBytes; i++) {
         uint8_t byte = 0;
         for (int b = 0; b < 8; b++) {
-            byte = (byte << 1) | (imgData[indices[bitIdx++]] & 1);
+            byte = (byte << 1) | (imgData[allIndices[bitIdx++]] & 1);
         }
         finalPayload[i] = byte;
     }
     stbi_image_free(imgData);
 
-    // 3. Decrypt AES-CTR
+    // 5. Decrypt AES-CTR
     uint8_t iv[16];
-    for (int i = 0; i < 16; i++) iv[i] = finalPayload[i];
+    memcpy(iv, finalPayload.data(), 16);
     
     vector<uint8_t> plaintext(finalPayload.begin() + 16, finalPayload.end());
     struct AES_ctx ctx;
     AES_init_ctx_iv(&ctx, keys.aesKey, iv);
     AES_CTR_xcrypt_buffer(&ctx, plaintext.data(), plaintext.size()); 
 
-    // 4. Verification & Magic Bytes
+    // 6. Verification & Extraction
     string header(plaintext.begin(), plaintext.begin() + 4);
     if (header != "PVLT") {
-        cout << "\n[!] CRITICAL ERROR: Access Denied. Incorrect password." << endl;
+        cout << "\n[!] ACCESS DENIED: Header mismatch. The key is incorrect." << endl;
         return;
     }
 
@@ -112,14 +121,15 @@ void processDecoding(string stegoPath, string password) {
     picosha2::hash256(decryptedText.begin(), decryptedText.end(), verificationHash.begin(), verificationHash.end());
 
     if (extractedHash != verificationHash) {
-        cout << "\n[!] FATAL ALERT: Checksum mismatch! Data tampered or corrupted." << endl;
+        cout << "\n[!] SECURITY ALERT: Payload hash mismatch! The data has been altered." << endl;
         return;
     }
 
-    cout << "\n[SUCCESS] Integrity Verified! (SHA-256 Match)" << endl;
-    cout << "[SUCCESS] Decoded Message: " << decryptedText << endl;
+    // Final Success Output
+    cout << "\n[SUCCESS] Vault Unlocked! Integrity Verified." << endl;
+    cout << "[SUCCESS] Secret Message: " << decryptedText << endl;
 
-    // 5. RAM Sanitization
+    // 7. RAM Sanitization
     secureWipe(decryptedText);
     cout << "[*] Sensitive data scrubbed from memory." << endl;
 }
@@ -127,14 +137,16 @@ void processDecoding(string stegoPath, string password) {
 int main(int argc, char* argv[]) {
     string stegoPath, password;
 
+    // Parse CLI arguments
     for (int i = 1; i < argc; i++) {
         string arg = argv[i];
         if (arg == "-i" && i + 1 < argc) stegoPath = argv[++i];
         else if (arg == "-p" && i + 1 < argc) password = argv[++i];
     }
 
-    cout << "=== Pixel-Vault (v5.0) ===" << endl;
+    cout << "=== Pixel-Vault (v5.0 - FOOLPROOF DECODER) ===" << endl;
 
+    // GUI Hybrid Fallback
     if (stegoPath.empty()) {
         cout << "[*] Opening GUI to select stego image..." << endl;
         const char* filter[1] = {"*.png"};
